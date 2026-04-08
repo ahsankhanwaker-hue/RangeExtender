@@ -11,30 +11,37 @@ jobs:
 
     steps:
     # 1️⃣ Checkout repo
-    - uses: actions/checkout@v3
+    - name: Checkout
+      uses: actions/checkout@v3
 
-    # 2️⃣ Setup Arduino CLI v0.33.0 (stable)
-    - uses: arduino/setup-arduino-cli@v1
+    # 2️⃣ Setup Arduino CLI (stable)
+    - name: Setup Arduino CLI
+      uses: arduino/setup-arduino-cli@v1
       with:
         version: 0.33.0
 
-    # 3️⃣ Add ESP8266 JSON manually and update index
-    - run: |
+    # 3️⃣ Configure ESP8266 board manager
+    - name: Configure Arduino CLI
+      run: |
         arduino-cli config init
         arduino-cli config set board_manager.additional_urls https://arduino.esp8266.com/stable/package_esp8266com_index.json
         arduino-cli core update-index
 
-    # 4️⃣ Install latest ESP8266 core (no pin)
-    - run: arduino-cli core install esp8266:esp8266
+    # 4️⃣ Install ESP8266 core
+    - name: Install ESP8266 core
+      run: |
+        arduino-cli core install esp8266:esp8266
 
-    # 5️⃣ Compile your sketch
-    - run: |
+    # 5️⃣ Compile firmware (IMPORTANT FIX HERE)
+    - name: Compile
+      run: |
         arduino-cli compile \
-        --fqbn esp8266:esp8266:nodemcuv2:FlashSize=4M \
-        --output-dir build RangeExtender.ino
+        --fqbn esp8266:esp8266:nodemcuv2 \
+        --output-dir build .
 
-    # 6️⃣ Upload compiled binary as artifact
-    - uses: actions/upload-artifact@v4
+    # 6️⃣ Upload BIN artifact
+    - name: Upload firmware
+      uses: actions/upload-artifact@v4
       with:
-        name: esp8266-firmware
+        name: firmware
         path: build/*.bin
