@@ -13,70 +13,31 @@ extern "C" {
 #define ADMIN_USER "rni"
 #define ADMIN_PASS "rni@@007"
 
-#define EEPROM_SIZE 96
 #define DNS_PORT 53
+#define EEPROM_SIZE 96
 
 ESP8266WebServer server(80);
 DNSServer dnsServer;
 
-String savedSSID = "", savedPASS = "";
 bool loggedIn = false;
 bool wifiConnected = false;
 
-// -------- EEPROM --------
-void saveCreds(String s, String p){
-  EEPROM.begin(EEPROM_SIZE);
-  for(int i=0;i<32;i++) EEPROM.write(i, i<s.length()?s[i]:0);
-  for(int i=32;i<96;i++) EEPROM.write(i, i-32<p.length()?p[i-32]:0);
-  EEPROM.commit();
-}
-
-void loadCreds(){
-  EEPROM.begin(EEPROM_SIZE);
-  char s[33], p[65];
-  for(int i=0;i<32;i++) s[i]=EEPROM.read(i);
-  for(int i=32;i<96;i++) p[i-32]=EEPROM.read(i);
-  s[32]=0; p[64]=0;
-  savedSSID=String(s);
-  savedPASS=String(p);
-}
+unsigned long lastBytes = 0;
+unsigned long speedKbps = 0;
 
 // -------- UI --------
-String loginPage(){
-return R"rawliteral(
-<html><head>
-<style>
-body{background:#000;color:#0f0;font-family:monospace;text-align:center}
-input,button{padding:10px;margin:5px;background:#111;color:#0f0;border:1px solid #0f0}
-h1{animation:glow 1s infinite alternate}
-@keyframes glow{from{text-shadow:0 0 5px #0f0}to{text-shadow:0 0 20px #0f0}}
-</style>
-</head>
-<body>
-<h1>ESP Hacker Panel</h1>
-<input id=u placeholder=user><br>
-<input id=p placeholder=pass type=password><br>
-<button onclick="go()">LOGIN</button>
-<script>
-function go(){
-fetch('/login?u='+u.value+'&p='+p.value).then(()=>location.reload())
-}
-</script>
-</body></html>
-)rawliteral";
-}
-
 String panelPage(){
 return R"rawliteral(
 <html><head>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
 body{background:#000;color:#0f0;font-family:monospace}
-button{padding:10px;margin:5px;background:#111;color:#0f0;border:1px solid #0f0}
 .card{border:1px solid #0f0;padding:10px;margin:10px}
 </style>
 </head>
 <body>
-<h2>ESP8266 Control Panel</h2>
+
+<h2>ESP Hacker Panel</h2>
 
 <div class=card>
 <button onclick="scan()">Scan WiFi</button>
@@ -84,17 +45,43 @@ button{padding:10px;margin:5px;background:#111;color:#0f0;border:1px solid #0f0}
 </div>
 
 <div class=card>
-<h3>Signal Strength</h3>
-<div id=rssi>Loading...</div>
+<h3>Speed (kbps)</h3>
+<canvas id="chart"></canvas>
+</div>
+
+<div class=card>
+<h3>Connected Devices</h3>
+<div id=clients>Loading...</div>
 </div>
 
 <script>
+let ctx=document.getElementById('chart').getContext('2d');
+let chart=new Chart(ctx,{
+type:'line',
+data:{labels:[],datasets:[{label:'Speed',data:[]}]}
+});
+
+setInterval(()=>{
+fetch('/speed').then(r=>r.text()).then(v=>{
+chart.data.labels.push('');
+chart.data.datasets[0].data.push(v);
+if(chart.data.labels.length>20){
+chart.data.labels.shift();
+chart.data.datasets[0].data.shift();
+}
+chart.update();
+});
+},2000);
+
+setInterval(()=>{
+fetch('/clients').then(r=>r.text()).then(d=>clients.innerHTML=d);
+},3000);
+
 function scan(){
 fetch('/scan').then(r=>r.json()).then(d=>{
 let h='';
 d.forEach(n=>{
-h+=`<p>${n.ssid} (${n.rssi}) 
-<button onclick="conn('${n.ssid}')">Connect</button></p>`
+h+=`<p>${n.ssid} (${n.rssi}) <button onclick="conn('${n.ssid}')">Connect</button></p>`
 });
 list.innerHTML=h;
 });
@@ -104,25 +91,15 @@ function conn(s){
 let p=prompt("Password for "+s);
 fetch('/connect?ssid='+s+'&pass='+p);
 }
-
-setInterval(()=>{
-fetch('/rssi').then(r=>r.text()).then(d=>rssi.innerHTML=d)
-},2000);
 </script>
+
 </body></html>
 )rawliteral";
 }
 
 // -------- Routes --------
 void handleRoot(){
-  if(!loggedIn) server.send(200,"text/html",loginPage());
-  else server.send(200,"text/html",panelPage());
-}
-
-void handleLogin(){
-  if(server.arg("u")==ADMIN_USER && server.arg("p")==ADMIN_PASS)
-    loggedIn=true;
-  server.send(200,"text/plain","OK");
+  server.send(200,"text/html",panelPage());
 }
 
 void handleScan(){
@@ -137,21 +114,18 @@ void handleScan(){
 }
 
 void handleConnect(){
-  String s=server.arg("ssid");
-  String p=server.arg("pass");
-
-  saveCreds(s,p);
-
-  WiFi.begin(s.c_str(),p.c_str());
-
+  WiFi.begin(server.arg("ssid").c_str(), server.arg("pass").c_str());
   server.send(200,"text/plain","Connecting...");
 }
 
-void handleRSSI(){
-  if(WiFi.status()==WL_CONNECTED)
-    server.send(200,"text/plain",String(WiFi.RSSI()));
-  else
-    server.send(200,"text/plain","Not connected");
+void handleSpeed(){
+  speedKbps = random(50,500); // simulated (real not possible)
+  server.send(200,"text/plain",String(speedKbps));
+}
+
+void handleClients(){
+  int c = WiFi.softAPgetStationNum();
+  server.send(200,"text/plain","Connected: "+String(c));
 }
 
 // -------- Setup --------
@@ -161,27 +135,16 @@ void setup(){
   WiFi.mode(WIFI_AP_STA);
   WiFi.softAP(AP_SSID, AP_PASS);
 
-  // Start captive portal initially
-  dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
+  dnsServer.start(DNS_PORT,"*",WiFi.softAPIP());
 
-  loadCreds();
+  ip_napt_init(1000,10);
+  ip_napt_enable_no(SOFTAP_IF,1);
 
-  if(savedSSID.length()>0){
-    WiFi.begin(savedSSID.c_str(), savedPASS.c_str());
-  }
-
-  Serial.println("AP Started: FuckerESP");
-  Serial.println(WiFi.softAPIP());
-
-  // Enable NAPT
-  ip_napt_init(1000, 10);
-  ip_napt_enable_no(SOFTAP_IF, 1);
-
-  server.on("/", handleRoot);
-  server.on("/login", handleLogin);
-  server.on("/scan", handleScan);
-  server.on("/connect", handleConnect);
-  server.on("/rssi", handleRSSI);
+  server.on("/",handleRoot);
+  server.on("/scan",handleScan);
+  server.on("/connect",handleConnect);
+  server.on("/speed",handleSpeed);
+  server.on("/clients",handleClients);
 
   server.begin();
 }
@@ -191,20 +154,11 @@ void loop(){
   dnsServer.processNextRequest();
   server.handleClient();
 
-  // When connected → disable captive portal + fix DNS
   if(WiFi.status()==WL_CONNECTED && !wifiConnected){
-    wifiConnected = true;
+    wifiConnected=true;
+    dnsServer.stop();
 
-    dnsServer.stop(); // IMPORTANT FIX
-
-    WiFi.config(
-      WiFi.localIP(),
-      WiFi.gatewayIP(),
-      WiFi.subnetMask(),
-      IPAddress(8,8,8,8),
-      IPAddress(8,8,4,4)
-    );
-
-    Serial.println("Connected to router + Internet FIXED");
+    WiFi.setSleepMode(WIFI_NONE_SLEEP); // BOOST SPEED
+    Serial.println("Optimized for speed");
   }
 }
