@@ -1,0 +1,40 @@
+name: Build ESP8266 Firmware
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    # 1️⃣ Checkout repo
+    - uses: actions/checkout@v3
+
+    # 2️⃣ Setup Arduino CLI v0.33.0 (stable)
+    - uses: arduino/setup-arduino-cli@v1
+      with:
+        version: 0.33.0
+
+    # 3️⃣ Add ESP8266 JSON manually and update index
+    - run: |
+        arduino-cli config init
+        arduino-cli config set board_manager.additional_urls https://arduino.esp8266.com/stable/package_esp8266com_index.json
+        arduino-cli core update-index
+
+    # 4️⃣ Install latest ESP8266 core (no pin)
+    - run: arduino-cli core install esp8266:esp8266
+
+    # 5️⃣ Compile your sketch
+    - run: |
+        arduino-cli compile \
+        --fqbn esp8266:esp8266:nodemcuv2:FlashSize=4M \
+        --output-dir build RangeExtender.ino
+
+    # 6️⃣ Upload compiled binary as artifact
+    - uses: actions/upload-artifact@v4
+      with:
+        name: esp8266-firmware
+        path: build/*.bin
