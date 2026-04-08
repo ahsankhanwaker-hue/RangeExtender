@@ -15,13 +15,13 @@ extern "C" {
 
 #define EEPROM_SIZE 96
 #define DNS_PORT 53
-#define NAPT 1
-#define NAPT_PORT 10
 
 ESP8266WebServer server(80);
 DNSServer dnsServer;
 
+String savedSSID = "", savedPASS = "";
 bool loggedIn = false;
+bool wifiConnected = false;
 
 // -------- EEPROM --------
 void saveCreds(String s, String p){
@@ -31,17 +31,17 @@ void saveCreds(String s, String p){
   EEPROM.commit();
 }
 
-void loadCreds(String &s, String &p){
+void loadCreds(){
   EEPROM.begin(EEPROM_SIZE);
-  char ssid[33], pass[65];
-  for(int i=0;i<32;i++) ssid[i]=EEPROM.read(i);
-  for(int i=32;i<96;i++) pass[i-32]=EEPROM.read(i);
-  ssid[32]=0; pass[64]=0;
-  s = String(ssid);
-  p = String(pass);
+  char s[33], p[65];
+  for(int i=0;i<32;i++) s[i]=EEPROM.read(i);
+  for(int i=32;i<96;i++) p[i-32]=EEPROM.read(i);
+  s[32]=0; p[64]=0;
+  savedSSID=String(s);
+  savedPASS=String(p);
 }
 
-// -------- Hacker UI --------
+// -------- UI --------
 String loginPage(){
 return R"rawliteral(
 <html><head>
@@ -139,8 +139,11 @@ void handleScan(){
 void handleConnect(){
   String s=server.arg("ssid");
   String p=server.arg("pass");
+
   saveCreds(s,p);
+
   WiFi.begin(s.c_str(),p.c_str());
+
   server.send(200,"text/plain","Connecting...");
 }
 
@@ -158,15 +161,20 @@ void setup(){
   WiFi.mode(WIFI_AP_STA);
   WiFi.softAP(AP_SSID, AP_PASS);
 
+  // Start captive portal initially
   dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
 
-  String ss, pp;
-  loadCreds(ss, pp);
-  if(ss.length()>0){
-    WiFi.begin(ss.c_str(), pp.c_str());
+  loadCreds();
+
+  if(savedSSID.length()>0){
+    WiFi.begin(savedSSID.c_str(), savedPASS.c_str());
   }
 
-  ip_napt_init(NAPT, NAPT_PORT);
+  Serial.println("AP Started: FuckerESP");
+  Serial.println(WiFi.softAPIP());
+
+  // Enable NAPT
+  ip_napt_init(1000, 10);
   ip_napt_enable_no(SOFTAP_IF, 1);
 
   server.on("/", handleRoot);
@@ -182,4 +190,21 @@ void setup(){
 void loop(){
   dnsServer.processNextRequest();
   server.handleClient();
+
+  // When connected → disable captive portal + fix DNS
+  if(WiFi.status()==WL_CONNECTED && !wifiConnected){
+    wifiConnected = true;
+
+    dnsServer.stop(); // IMPORTANT FIX
+
+    WiFi.config(
+      WiFi.localIP(),
+      WiFi.gatewayIP(),
+      WiFi.subnetMask(),
+      IPAddress(8,8,8,8),
+      IPAddress(8,8,4,4)
+    );
+
+    Serial.println("Connected to router + Internet FIXED");
+  }
 }
